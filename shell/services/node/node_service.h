@@ -65,6 +65,10 @@ class NodeService : public node::mojom::NodeService {
                   mojo::PendingRemote<node::mojom::NodeServiceClient>
                       client_pending_remote) override;
 
+  void BindAIManager(
+      node::mojom::BindAIManagerParamsPtr params,
+      mojo::PendingReceiver<blink::mojom::AIManager> ai_manager) override;
+
  private:
   // This needs to be initialized first so that it can be destroyed last
   // after the node::Environment is destroyed. This ensures that if

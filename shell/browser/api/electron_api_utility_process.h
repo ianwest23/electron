@@ -21,6 +21,7 @@
 #include "shell/common/gin_helper/pinnable.h"
 #include "shell/common/gin_helper/wrappable.h"
 #include "shell/services/node/public/mojom/node_service.mojom.h"
+#include "third_party/blink/public/mojom/ai/ai_manager.mojom.h"
 #include "v8/include/v8-forward.h"
 
 namespace gin {
@@ -56,6 +57,14 @@ class UtilityProcessWrapper final
   ~UtilityProcessWrapper() override;
   static gin_helper::Handle<UtilityProcessWrapper> Create(gin::Arguments* args);
   static raw_ptr<UtilityProcessWrapper> FromProcessId(base::ProcessId pid);
+
+  void BindAIManager(std::optional<int32_t> web_contents_id,
+                     const url::Origin& security_origin,
+                     mojo::PendingReceiver<blink::mojom::AIManager> ai_manager);
+
+  base::WeakPtr<UtilityProcessWrapper> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
 
   void Shutdown(uint64_t exit_code);
 

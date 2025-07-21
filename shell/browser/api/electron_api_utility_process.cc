@@ -33,6 +33,7 @@
 #include "shell/common/v8_util.h"
 #include "third_party/blink/public/common/messaging/message_port_descriptor.h"
 #include "third_party/blink/public/common/messaging/transferable_message_mojom_traits.h"
+#include "third_party/blink/public/mojom/ai/ai_manager.mojom.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom.h"
 
 #if BUILDFLAG(IS_POSIX)
@@ -425,6 +426,18 @@ bool UtilityProcessWrapper::Accept(mojo::Message* mojo_message) {
 void UtilityProcessWrapper::OnV8FatalError(const std::string& location,
                                            const std::string& report) {
   EmitWithoutEvent("error", "FatalError", location, report);
+}
+
+void UtilityProcessWrapper::BindAIManager(
+    std::optional<int32_t> web_contents_id,
+    const url::Origin& security_origin,
+    mojo::PendingReceiver<blink::mojom::AIManager> ai_manager) {
+  node::mojom::BindAIManagerParamsPtr params =
+      node::mojom::BindAIManagerParams::New();
+  params->web_contents_id = web_contents_id;
+  params->security_origin = security_origin.GetURL().spec();
+
+  node_service_remote_->BindAIManager(std::move(params), std::move(ai_manager));
 }
 
 // static

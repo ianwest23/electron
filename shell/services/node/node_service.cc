@@ -22,6 +22,9 @@
 #include "shell/common/node_bindings.h"
 #include "shell/common/node_includes.h"
 #include "shell/services/node/parent_port.h"
+#include "shell/utility/ai/utility_ai_manager.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 #if !IS_MAS_BUILD()
 #include "shell/common/crash_keys.h"
@@ -186,6 +189,14 @@ void NodeService::Initialize(
   // Run entry script.
   node_bindings_->PrepareEmbedThread();
   node_bindings_->StartPolling();
+}
+
+void NodeService::BindAIManager(
+    node::mojom::BindAIManagerParamsPtr params,
+    mojo::PendingReceiver<blink::mojom::AIManager> ai_manager) {
+  new UtilityAIManager(params->web_contents_id,
+                       url::Origin::Create(GURL(params->security_origin)),
+                       std::move(ai_manager));
 }
 
 }  // namespace electron
