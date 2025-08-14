@@ -23,6 +23,11 @@ class NotificationPresenter;
 struct NotificationAction {
   std::u16string type;
   std::u16string text;
+  // Windows-only: optional activation type for toast actions.
+  // Supported values per Windows toast schema: "foreground", "background",
+  // "protocol". Defaults to "foreground" if empty or invalid. "system" is
+  // reserved for Electron's internally added dismiss action.
+  std::u16string activation_type;
 };
 
 struct NotificationOptions {

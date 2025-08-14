@@ -43,7 +43,9 @@ Returns `boolean` - Whether or not desktop notifications are supported on the cu
   * `replyPlaceholder` string (optional) _macOS_ - The placeholder to write in the inline reply input field.
   * `sound` string (optional) _macOS_ - The name of the sound file to play when the notification is shown.
   * `urgency` string (optional) _Linux_ - The urgency level of the notification. Can be 'normal', 'critical', or 'low'.
-  * `actions` [NotificationAction[]](structures/notification-action.md) (optional) _macOS_ - Actions to add to the notification. Please read the available actions and limitations in the `NotificationAction` documentation.
+  * `actions` [NotificationAction[]](structures/notification-action.md) (optional) _macOS_ _Windows_
+    Actions to add to the notification. See the structure docs for full details and platform limitations.
+    On _Windows_, entries with `type: 'button'` become toast buttons. Each button's `text` is its label. Optional `activationType` (`foreground` | `background` | `protocol`) controls the toast behavior (defaults to `foreground`). Buttons are only supported when not supplying custom `toastXml`. If `timeoutType` is `'never'`, a system Dismiss button (activationType `system`) is appended after user buttons.
   * `closeButtonText` string (optional) _macOS_ - A custom title for the close button of an alert. An empty string will cause the default localized text to be used.
   * `toastXml` string (optional) _Windows_ - A custom description of the Notification on Windows superseding all properties above. Provides full customization of design and behavior of the notification.
 
@@ -181,6 +183,8 @@ If `timeoutType` is set to 'never', the notification never expires. It stays ope
 #### `notification.actions`
 
 A [`NotificationAction[]`](structures/notification-action.md) property representing the actions of the notification.
+
+On Windows, only `button` actions are used. Other action types are ignored. Each button may specify an `activationType` (`foreground`, `background`, or `protocol`). When `timeoutType` is `'never'`, Electron appends a system dismiss action after your provided buttons.
 
 #### `notification.toastXml` _Windows_
 

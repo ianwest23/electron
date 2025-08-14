@@ -204,9 +204,9 @@ HRESULT WindowsToastNotification::ShowInternal(
     auto* presenter_win = static_cast<NotificationPresenterWin*>(presenter());
     std::wstring icon_path =
         presenter_win->SaveIconToFilesystem(options.icon, options.icon_url);
-    std::u16string toast_xml_str =
-        GetToastXml(toast_manager_.Get(), options.title, options.msg, icon_path,
-                    options.timeout_type, options.silent);
+  std::u16string toast_xml_str = GetToastXml(
+    toast_manager_.Get(), options.title, options.msg, icon_path,
+    options.timeout_type, options.silent, options.actions);
     REPORT_AND_RETURN_IF_FAILED(
         XmlDocumentFromString(base::as_wcstr(toast_xml_str), &toast_xml),
         "XML: Invalid XML");
@@ -250,12 +250,13 @@ HRESULT WindowsToastNotification::ShowInternal(
 }
 
 std::u16string WindowsToastNotification::GetToastXml(
-    winui::Notifications::IToastNotificationManagerStatics* toastManager,
-    const std::u16string& title,
-    const std::u16string& msg,
-    const std::wstring& icon_path,
-    const std::u16string& timeout_type,
-    bool silent) {
+  winui::Notifications::IToastNotificationManagerStatics* toastManager,
+  const std::u16string& title,
+  const std::u16string& msg,
+  const std::wstring& icon_path,
+  const std::u16string& timeout_type,
+  bool silent,
+  const std::vector<NotificationAction>& actions) {
   (void)toastManager;
   XmlWriter xml_writer;
   xml_writer.StartWriting();
@@ -309,15 +310,37 @@ std::u16string WindowsToastNotification::GetToastXml(
   xml_writer.EndElement();  // </binding>
   xml_writer.EndElement();  // </visual>
 
-  // <actions> (only to ensure reminder has a dismiss button).
-  if (is_reminder) {
+  // <actions>
+  // Add user-specified actions (type == "button") plus reminder dismiss if needed.
+  if (is_reminder || !actions.empty()) {
     xml_writer.StartElement(kActions);
-    xml_writer.StartElement(kAction);
-    xml_writer.AddAttribute(kActivationType, kSystem);
-    xml_writer.AddAttribute(kArguments, kDismiss);
-    xml_writer.AddAttribute(
-        "content", base::WideToUTF8(l10n_util::GetWideString(IDS_APP_CLOSE)));
-    xml_writer.EndElement();  // </action>
+    // User buttons (foreground activation, arguments = index)
+    for (size_t i = 0; i < actions.size(); ++i) {
+      const auto& act = actions[i];
+      if (act.type == u"button" && !act.text.empty()) {
+        xml_writer.StartElement(kAction);
+        std::string activation = "foreground";
+        if (!act.activation_type.empty()) {
+          std::string at = base::UTF16ToUTF8(act.activation_type);
+          // Allow only known safe values; fallback to foreground.
+          if (at == "foreground" || at == "background" || at == "protocol")
+            activation = at;
+        }
+        xml_writer.AddAttribute(kActivationType, activation);
+        xml_writer.AddAttribute(kArguments, base::NumberToString(i));
+        xml_writer.AddAttribute("content", base::UTF16ToUTF8(act.text));
+        xml_writer.EndElement();
+      }
+    }
+    if (is_reminder) {
+      xml_writer.StartElement(kAction);
+      xml_writer.AddAttribute(kActivationType, kSystem);
+      xml_writer.AddAttribute(kArguments, kDismiss);
+      xml_writer.AddAttribute(
+          "content",
+          base::WideToUTF8(l10n_util::GetWideString(IDS_APP_CLOSE)));
+      xml_writer.EndElement();
+    }
     xml_writer.EndElement();  // </actions>
   }
 

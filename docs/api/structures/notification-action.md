@@ -1,13 +1,14 @@
 # NotificationAction Object
 
-* `type` string - The type of action, can be `button`.
+* `type` string - The type of action. Currently supported: `button` (macOS, Windows).
 * `text` string (optional) - The label for the given action.
+* `activationType` string (optional) _Windows_ - Overrides the toast action activation type. Allowed values: `foreground`, `background`, `protocol`. Defaults to `foreground` when omitted or invalid. (`system` is reserved for Electron’s internal dismiss action on persistent toasts.)
 
 ## Platform / Action Support
 
 | Action Type | Platform Support | Usage of `text` | Default `text` | Limitations |
 |-------------|------------------|-----------------|----------------|-------------|
-| `button`    | macOS            | Used as the label for the button | "Show" (or a localized string by system default if first of such `button`, otherwise empty) | Only the first one is used. If multiple are provided, those beyond the first will be listed as additional actions (displayed when mouse active over the action button). Any such action also is incompatible with `hasReply` and will be ignored if `hasReply` is `true`. |
+| `button`    | macOS, Windows   | Used as the label for the button | macOS: "Show" (or localized default if first), Windows: none (your text is required) | macOS: Only first primary button shown (others as additional). Windows: All provided buttons rendered in order (OS may limit count); ignored if custom `toastXml` supplied. `hasReply` incompatibility applies only to macOS. Windows supports optional `activationType` (foreground/background/protocol). |
 
 ### Button support on macOS
 
