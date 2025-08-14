@@ -25,6 +25,7 @@
 #include "shell/browser/notifications/notification_delegate.h"
 #include "shell/browser/notifications/win/notification_presenter_win.h"
 #include "shell/browser/win/scoped_hstring.h"
+#include "shell/browser/notifications/win/notification_toast_activator.h"
 #include "shell/common/application_info.h"
 #include "third_party/libxml/chromium/xml_writer.h"  // nogncheck
 #include "ui/base/l10n/l10n_util_win.h"
@@ -97,6 +98,11 @@ constexpr char kActivationType[] = "activationType";
 constexpr char kSystem[] = "system";
 constexpr char kArguments[] = "arguments";
 constexpr char kDismiss[] = "dismiss";
+constexpr char kLaunch[] = "launch";  // attribute for root <toast>
+constexpr char kArgTypeAction[] = "action";  // type discriminator
+constexpr char kArgTypeDismiss[] = "dismiss";
+constexpr char kArgTypeClick[] = "click";  // body click (no args)
+constexpr char kArgTypeReply[] = "reply";  // inline reply
 // The XML version header that has to be stripped from the output.
 constexpr char kXmlVersionHeader[] = "<?xml version=\"1.0\"?>\n";
 
@@ -139,8 +145,13 @@ bool WindowsToastNotification::Initialize() {
     if (!GetAppUserModelID(&app_id))
       return false;
 
-    return SUCCEEDED(
-        toast_manager_->CreateToastNotifierWithId(app_id, &toast_notifier_));
+    if (FAILED(toast_manager_->CreateToastNotifierWithId(app_id, &toast_notifier_)))
+      return false;
+
+    // Register COM activator for foreground activation on cold start.
+    // Ignore failure (installer may handle static registration instead).
+    NotificationToastActivator::RegisterComServer();
+    return true;
   }
 }
 
@@ -204,9 +215,11 @@ HRESULT WindowsToastNotification::ShowInternal(
     auto* presenter_win = static_cast<NotificationPresenterWin*>(presenter());
     std::wstring icon_path =
         presenter_win->SaveIconToFilesystem(options.icon, options.icon_url);
+  has_inline_reply_ = options.has_reply;
   std::u16string toast_xml_str = GetToastXml(
     toast_manager_.Get(), options.title, options.msg, icon_path,
-    options.timeout_type, options.silent, options.actions);
+    options.timeout_type, options.silent, options.actions,
+    options.has_reply, options.reply_placeholder);
     REPORT_AND_RETURN_IF_FAILED(
         XmlDocumentFromString(base::as_wcstr(toast_xml_str), &toast_xml),
         "XML: Invalid XML");
@@ -256,13 +269,24 @@ std::u16string WindowsToastNotification::GetToastXml(
   const std::wstring& icon_path,
   const std::u16string& timeout_type,
   bool silent,
-  const std::vector<NotificationAction>& actions) {
+  const std::vector<NotificationAction>& actions,
+  bool has_reply,
+  const std::u16string& reply_placeholder) {
   (void)toastManager;
   XmlWriter xml_writer;
   xml_writer.StartWriting();
 
   // <toast ...>
   xml_writer.StartElement(kToast);
+
+  // Provide a launch argument stub to allow foreground activation when app
+  // isn't running. We'll encode minimal metadata: notification id hash so we
+  // can correlate later if needed. (Currently not parsed on re-launch but
+  // reserved for future use.)
+  {
+    std::string launch_value = base::StrCat({"nid=", base::NumberToString(base::FastHash(notification_id()))});
+    xml_writer.AddAttribute(kLaunch, launch_value);
+  }
 
   const bool is_reminder = (timeout_type == u"never");
   if (is_reminder) {
@@ -312,8 +336,18 @@ std::u16string WindowsToastNotification::GetToastXml(
 
   // <actions>
   // Add user-specified actions (type == "button") plus reminder dismiss if needed.
-  if (is_reminder || !actions.empty()) {
+  if (is_reminder || !actions.empty() || has_reply) {
     xml_writer.StartElement(kActions);
+    if (has_reply) {
+      // Inline reply input (text box).
+      xml_writer.StartElement("input");
+      xml_writer.AddAttribute("id", "reply");
+      xml_writer.AddAttribute("type", "text");
+      if (!reply_placeholder.empty())
+        xml_writer.AddAttribute("placeHolderContent",
+                                base::UTF16ToUTF8(reply_placeholder));
+      xml_writer.EndElement();
+    }
     // User buttons (foreground activation, arguments = index)
     for (size_t i = 0; i < actions.size(); ++i) {
       const auto& act = actions[i];
@@ -327,7 +361,11 @@ std::u16string WindowsToastNotification::GetToastXml(
             activation = at;
         }
         xml_writer.AddAttribute(kActivationType, activation);
-        xml_writer.AddAttribute(kArguments, base::NumberToString(i));
+        // Encode structured arguments so we can distinguish between an
+        // action button press, body click, reply, dismiss, etc. Format:
+        // type=action;index=<n>
+        std::string args = base::StrCat({"type=", kArgTypeAction, ";index=", base::NumberToString(i)});
+        xml_writer.AddAttribute(kArguments, args);
         xml_writer.AddAttribute("content", base::UTF16ToUTF8(act.text));
         xml_writer.EndElement();
       }
@@ -335,7 +373,8 @@ std::u16string WindowsToastNotification::GetToastXml(
     if (is_reminder) {
       xml_writer.StartElement(kAction);
       xml_writer.AddAttribute(kActivationType, kSystem);
-      xml_writer.AddAttribute(kArguments, kDismiss);
+      // type=dismiss;system=1
+      xml_writer.AddAttribute(kArguments, "type=dismiss;system=1");
       xml_writer.AddAttribute(
           "content",
           base::WideToUTF8(l10n_util::GetWideString(IDS_APP_CLOSE)));
@@ -411,11 +450,110 @@ ToastEventHandler::~ToastEventHandler() = default;
 IFACEMETHODIMP ToastEventHandler::Invoke(
     winui::Notifications::IToastNotification* sender,
     IInspectable* args) {
-  content::GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE,
-      base::BindOnce(&Notification::NotificationClicked, notification_));
-  DebugLog("Notification clicked");
+  if (!notification_)
+    return S_OK;
 
+  // Attempt to extract inline reply text if present.
+  std::string reply_utf8;
+  std::string arguments_utf8;  // raw arguments string (for buttons / dismiss)
+  ComPtr<winui::Notifications::IToastActivatedEventArgs> toast_args;
+  if (args && SUCCEEDED(args->QueryInterface(IID_PPV_ARGS(&toast_args)))) {
+    // Get Arguments (string) for activation cause.
+    HSTRING args_hstr = nullptr;
+    if (SUCCEEDED(toast_args->get_Arguments(&args_hstr)) && args_hstr) {
+      unsigned int alen = 0;
+      const wchar_t* aptr = WindowsGetStringRawBuffer(args_hstr, &alen);
+      if (aptr)
+        arguments_utf8 = base::WideToUTF8(std::wstring(aptr, alen));
+    }
+    // IToastActivatedEventArgs2 for user input.
+    ComPtr<winui::Notifications::IToastActivatedEventArgs2> toast_args2;
+    if (SUCCEEDED(toast_args.As(&toast_args2))) {
+      ComPtr<ABI::Windows::Foundation::Collections::IMapView<HSTRING, IInspectable*>> user_input;
+      if (SUCCEEDED(toast_args2->get_UserInput(&user_input)) && user_input) {
+        ComPtr<ABI::Windows::Foundation::Collections::IIterable<ABI::Windows::Foundation::Collections::IKeyValuePair<HSTRING, IInspectable*>*>> iterable;
+        if (SUCCEEDED(user_input.As(&iterable)) && iterable) {
+          ComPtr<ABI::Windows::Foundation::Collections::IIterator<ABI::Windows::Foundation::Collections::IKeyValuePair<HSTRING, IInspectable*>*>> it;
+            if (SUCCEEDED(iterable->First(&it)) && it) {
+              boolean has_current = false;
+              while (SUCCEEDED(it->get_HasCurrent(&has_current)) && has_current) {
+                ComPtr<ABI::Windows::Foundation::Collections::IKeyValuePair<HSTRING, IInspectable*>> pair;
+                if (SUCCEEDED(it->get_Current(&pair)) && pair) {
+                  HSTRING key_hstr = nullptr;
+                  if (SUCCEEDED(pair->get_Key(&key_hstr)) && key_hstr) {
+                    unsigned int len = 0;
+                    const wchar_t* key_raw = WindowsGetStringRawBuffer(key_hstr, &len);
+                    if (key_raw && std::wstring_view(key_raw, len) == L"reply") {
+                      ComPtr<IInspectable> val_inspect;
+                      if (SUCCEEDED(pair->get_Value(&val_inspect)) && val_inspect) {
+                        ComPtr<ABI::Windows::Foundation::IPropertyValue> prop_val;
+                        if (SUCCEEDED(val_inspect.As(&prop_val))) {
+                          HSTRING reply_hstr = nullptr;
+                          if (SUCCEEDED(prop_val->GetString(&reply_hstr)) && reply_hstr) {
+                            unsigned int rlen = 0;
+                            const wchar_t* rptr = WindowsGetStringRawBuffer(reply_hstr, &rlen);
+                            if (rptr)
+                              reply_utf8 = base::WideToUTF8(std::wstring(rptr, rlen));
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                boolean moved = false;
+                if (FAILED(it->MoveNext(&moved)) || !moved)
+                  break;
+              }
+            }
+        }
+      }
+    }
+  }
+
+  if (!reply_utf8.empty()) {
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&NotificationDelegate::NotificationReplied,
+                                  notification_->delegate(), reply_utf8));
+    DebugLog("Notification replied");
+  } else if (!arguments_utf8.empty()) {
+    // Parse semi-colon separated key=value pairs.
+    base::StringPairs kv;
+    for (const auto& part : base::SplitString(arguments_utf8, ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+      auto eq = part.find('=');
+      if (eq != std::string::npos) {
+        kv.emplace_back(part.substr(0, eq), part.substr(eq + 1));
+      }
+    }
+    std::string type;
+    std::string index_str;
+    for (const auto& p : kv) {
+      if (p.first == "type") type = p.second;
+      else if (p.first == "index") index_str = p.second;
+    }
+    if (type == kArgTypeAction) {
+      int index = 0;
+      base::StringToInt(index_str, &index);
+      content::GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE, base::BindOnce(&Notification::NotificationActionInvoked,
+                                    notification_, index));
+      DebugLog("Notification action invoked");
+    } else if (type == kArgTypeDismiss) {
+      content::GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE, base::BindOnce(&Notification::NotificationDismissed,
+                                    notification_, true));
+      DebugLog("Notification dismissed (system action)");
+    } else {  // Unknown type: treat as click.
+      content::GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE, base::BindOnce(&Notification::NotificationClicked,
+                                    notification_));
+      DebugLog("Notification clicked (fallback)");
+    }
+  } else {
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&Notification::NotificationClicked,
+                                  notification_));
+    DebugLog("Notification clicked (no args)");
+  }
   return S_OK;
 }
 

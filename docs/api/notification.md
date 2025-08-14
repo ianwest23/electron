@@ -38,9 +38,9 @@ Returns `boolean` - Whether or not desktop notifications are supported on the cu
   * `body` string (optional) - The body text of the notification, which will be displayed below the title or subtitle.
   * `silent` boolean (optional) - Whether or not to suppress the OS notification noise when showing the notification.
   * `icon` (string | [NativeImage](native-image.md)) (optional) - An icon to use in the notification. If a string is passed, it must be a valid path to a local icon file.
-  * `hasReply` boolean (optional) _macOS_ - Whether or not to add an inline reply option to the notification.
+  * `hasReply` boolean (optional) _macOS_ _Windows_ - Whether or not to add an inline reply option to the notification. On Windows this adds a text input box to the toast.
   * `timeoutType` string (optional) _Linux_ _Windows_ - The timeout duration of the notification. Can be 'default' or 'never'.
-  * `replyPlaceholder` string (optional) _macOS_ - The placeholder to write in the inline reply input field.
+  * `replyPlaceholder` string (optional) _macOS_ _Windows_ - The placeholder to write in the inline reply input field.
   * `sound` string (optional) _macOS_ - The name of the sound file to play when the notification is shown.
   * `urgency` string (optional) _Linux_ - The urgency level of the notification. Can be 'normal', 'critical', or 'low'.
   * `actions` [NotificationAction[]](structures/notification-action.md) (optional) _macOS_ _Windows_
@@ -90,14 +90,14 @@ is closed.
 
 On Windows, the `close` event can be emitted in one of three ways: programmatic dismissal with `notification.close()`, by the user closing the notification, or via system timeout. If a notification is in the Action Center after the initial `close` event is emitted, a call to `notification.close()` will remove the notification from the action center but the `close` event will not be emitted again.
 
-#### Event: 'reply' _macOS_
+#### Event: 'reply' _macOS_ _Windows_
 
 Returns:
 
 * `event` Event
 * `reply` string - The string the user entered into the inline reply field.
 
-Emitted when the user clicks the "Reply" button on a notification with `hasReply: true`.
+Emitted when the user submits an inline reply on a notification with `hasReply: true`.
 
 #### Event: 'action' _macOS_
 

@@ -69,6 +69,11 @@ class Notification {
 
   // Should be called by derived classes.
   void NotificationClicked();
+  // Invoked when a notification action button is pressed; mirrors the
+  // semantics of NotificationClicked (destroys the notification) but routes
+  // to the delegate's NotificationAction(index) callback instead of
+  // NotificationClick().
+  void NotificationActionInvoked(int index);
   void NotificationDismissed(bool should_destroy = true);
   void NotificationFailed(const std::string& error = "");
 

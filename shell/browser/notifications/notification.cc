@@ -31,6 +31,12 @@ void Notification::NotificationClicked() {
   Destroy();
 }
 
+void Notification::NotificationActionInvoked(int index) {
+  if (delegate())
+    delegate()->NotificationAction(index);
+  Destroy();
+}
+
 void Notification::NotificationDismissed(bool should_destroy) {
   if (delegate())
     delegate()->NotificationClosed();

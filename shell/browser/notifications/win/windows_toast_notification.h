@@ -66,7 +66,9 @@ class WindowsToastNotification : public Notification {
       const std::wstring& icon_path,
       const std::u16string& timeout_type,
     const bool silent,
-    const std::vector<NotificationAction>& actions);
+    const std::vector<NotificationAction>& actions,
+    bool has_reply,
+    const std::u16string& reply_placeholder);
   HRESULT XmlDocumentFromString(
       const wchar_t* xmlString,
       ABI::Windows::Data::Xml::Dom::IXmlDocument** doc);
@@ -88,6 +90,7 @@ class WindowsToastNotification : public Notification {
   ComPtr<ToastEventHandler> event_handler_;
   ComPtr<ABI::Windows::UI::Notifications::IToastNotification>
       toast_notification_;
+    bool has_inline_reply_ = false;
 };
 
 class ToastEventHandler : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
